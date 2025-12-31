@@ -1,0 +1,410 @@
+const express = require('express');
+const cors = require('cors');
+require('dotenv').config();
+const { MongoClient, ServerApiVersion,ObjectId  } = require('mongodb');
+
+
+const app = express();
+const port = process.env.PORT || 5000;
+
+app.use(cors());
+app.use(express.json())
+
+
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.cluq4ak.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+
+// Create a MongoClient with a MongoClientOptions object to set the Stable API version
+const client = new MongoClient(uri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  }
+});
+
+async function run() {
+  try {
+    // Connect the client to the server	(optional starting in v4.7)
+    // await client.connect();
+
+    // premium-members
+     const database = client.db("matrimonyhub"); // ✅ Your DB name
+    const biodatasCollection = database.collection("biodatas"); // ✅ Your Collection name
+    const favouoritebioCollection = database.collection("favouoritebio"); // ✅ Your Collection name
+
+    //  Premium Biodata API with age sorting (asc/desc)
+    app.get('/api/premium-biodatas', async (req, res) => {
+      const sortOrder = req.query.sort === 'desc' ? -1 : 1;
+
+      const result = await biodatasCollection
+        .find({ isPremium: "true" })
+        .sort({ age: sortOrder })
+        .limit(6)
+        .toArray();
+
+      res.send(result);
+    });
+
+
+    // ✅ Create Biodata
+app.get("/api/biodata/user/", async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const biodata = await biodatasCollection.find();
+    res.send(biodata || {}); // send empty object if not found
+  } catch (err) {
+    res.status(500).send({ error: "Failed to fetch biodata" });
+  }
+});
+
+// ✅ Create new biodata (POST)
+app.post("/api/biodata", async (req, res) => {
+  const data = req.body;
+  try {
+    // Check if email already exists
+    const existing = await biodatasCollection.findOne({ email: data.email });
+    if (existing) {
+      return res.status(400).send({ message: "Email already exists" });
+    }
+
+    const result = await biodatasCollection.insertOne(data);
+    res.status(201).send({ message: "Biodata created", id: result.insertedId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: "Failed to create biodata" });
+  }
+});
+
+
+app.put("/api/biodata/:id", async (req, res) => {
+  const { id } = req.params;
+  const updatedData = { ...req.body };
+
+  // Remove _id if it exists
+  delete updatedData._id;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).send({ error: "Invalid biodata ID" });
+  }
+
+  try {
+    // Prevent duplicate email for other records
+    const existing = await biodatasCollection.findOne({
+      email: updatedData.email,
+      _id: { $ne: new ObjectId(id) },
+    });
+
+    if (existing) {
+      return res.status(400).send({ message: "Email already exists in another biodata" });
+    }
+
+    const result = await biodatasCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updatedData }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ message: "Biodata not found" });
+    }
+
+    res.status(200).send({ message: "Biodata updated successfully", updateResult: result });
+  } catch (err) {
+    console.error("PUT /api/biodata/:id error:", err);
+    res.status(500).send({ error: "Server error while updating biodata" });
+  }
+});
+
+
+    // ✅ Get All Biodatas
+    app.get("/biodatas", async (req, res) => {
+      const cursor = biodatasCollection.find();
+      const result = await cursor.limit(200).toArray(); // limit 20
+      res.send(result);
+    });
+
+
+    app.get("/biodatas/:id", async (req, res) => {
+  const id = req.params.id;
+  try {
+    const post = await biodatasCollection.findOne({ _id: new ObjectId(id) });
+    if (!post) {
+      return res.status(404).send({ message: "Biodata not found" });
+    }
+    res.send(post);
+  } catch (err) {
+    res.status(500).send({ error: "Invalid ID or Server Error" });
+  }
+});
+
+
+//  Create or update biodata
+   app.get('/allbiodata', async (req, res) => {
+      const result = await biodatasCollection.find().toArray();
+      res.send(result);
+    })
+
+// POST - Create a new biodata with auto-generated biodataId
+app.post("/api/biodata", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    // ✅ Prevent duplicate email
+    const existing = await biodatasCollection.findOne({ email });
+    if (existing) {
+      return res.status(400).json({ message: "Biodata already exists for this email" });
+    }
+
+    // ✅ Find the last biodata (sorted by biodataId in descending order)
+    const lastBiodata = await biodatasCollection
+      .find()
+      .sort({ biodataId: -1 })
+      .limit(1)
+      .toArray();
+
+    // ✅ Generate new biodataId
+    const newBiodataId = lastBiodata.length > 0 ? lastBiodata[0].biodataId + 1 : 1;
+
+    // ✅ Create new biodata with generated biodataId
+    const newBiodata = {
+      ...req.body,
+      biodataId: newBiodataId,
+      createdAt: new Date(),
+    };
+
+    const result = await biodatasCollection.insertOne(newBiodata);
+
+    res.status(201).json({
+      message: "Biodata created successfully",
+      biodata: { _id: result.insertedId, ...newBiodata },
+    });
+  } catch (err) {
+    console.error("POST /api/biodata error:", err);
+    res.status(500).json({ error: "Server error while creating biodata" });
+  }
+});
+
+
+// ✅ PUT: Update existing biodata by ID
+app.put("/api/biodata/:id", async (req, res) => {
+  const { id } = req.params;
+  const updatedData = req.body;
+
+  console.log("Incoming update request for ID:", id);
+  console.log("Payload received:", updatedData);
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).send({ error: "Invalid biodata ID" });
+  }
+
+  try {
+    const existing = await biodatasCollection.findOne({
+      email: updatedData.email,
+      _id: { $ne: new ObjectId(id) },
+    });
+
+    if (existing) {
+      console.log("Duplicate email found:", existing.email);
+      return res.status(400).send({ message: "Email already exists in another biodata" });
+    }
+
+    const result = await biodatasCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updatedData }
+    );
+
+    console.log("Update result:", result);
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ message: "Biodata not found" });
+    }
+
+    res.status(200).send({ message: "Biodata updated successfully", updateResult: result });
+  } catch (err) {
+    console.error("PUT /api/biodata/:id error:", err);
+    res.status(500).send({ error: "Server error while updating biodata", details: err.message });
+  }
+});
+
+
+app.get("/api/biodata/user/:userId", async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const biodata = await biodatasCollection.findOne({ userId });
+    if (!biodata) {
+      return res.status(404).json({ message: "Biodata not found" });
+    }
+    res.status(200).json(biodata);
+  } catch (err) {
+    console.error("GET /api/biodata/user/:userId error:", err);
+    res.status(500).json({ error: "Server error while fetching biodata" });
+  }
+});
+
+// User requests biodata to be premium
+app.patch('/api/biodata/request-premium/:id', async (req, res) => {
+  const id = req.params.id;
+  const { ObjectId } = require("mongodb");
+
+  const result = await biodatasCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { premiumRequested: true } }
+  );
+
+  if (result.modifiedCount > 0) {
+    res.send({ message: "Request sent to admin for approval" });
+  } else {
+    res.status(400).send({ message: "Failed to update" });
+  }
+});
+
+
+
+
+// Get all contact requests by user
+app.get('/api/contact-requests/:uid', async (req, res) => {
+  const uid = req.params.uid;
+  const requests = await client
+    .db('matrimonyhub')
+    .collection('contactRequests')
+    .find({ requesterId: uid })
+    .sort({ createdAt: -1 })
+    .toArray();
+  res.send(requests);
+});
+
+// Delete contact request
+app.delete('/api/contact-requests/:id', async (req, res) => {
+  const { ObjectId } = require('mongodb');
+  const id = req.params.id;
+
+  const result = await client
+    .db('matrimonyhub')
+    .collection('contactRequests')
+    .deleteOne({ _id: new ObjectId(id) });
+
+  res.send(result);
+});
+
+const favouritesCollection = database.collection("favourites");
+
+// Get user's favourite biodata list
+app.get('/api/favourites/:userId', async (req, res) => {
+  const userId = req.params.userId;
+
+  try {
+    const favs = await favouritesCollection.find({ userId }).toArray();
+    res.send(favs);
+  } catch (error) {
+    console.error('Error fetching favourites:', error);
+    res.status(500).send({ message: 'Server error fetching favourites' });
+  }
+});
+
+// ************************************************ */
+
+    app.post('/favouritebio', async (req, res) => {
+      const post = req.body;
+      const result = await favouoritebioCollection.insertOne(post)
+      res.send(result)
+    })
+    app.get('/favouritebio', async (req, res) => {
+      const result = await favouoritebioCollection.find().toArray();
+      res.send(result);
+    })
+    app.delete('/favouritebio/:biodataId', async (req, res) => {
+      const biodataId = Number(req.params.biodataId);
+      const query = { biodataId:biodataId};
+      const result = await favouoritebioCollection.deleteOne(query);
+      res.send(result);
+    })
+
+app.put("/users/membership/:email", async (req, res) => {
+  try {
+    const email = req.params.email; // get email from URL
+    const updateData = req.body;    // get body data (e.g. { membership: "premium" })
+
+    if (!email) {
+      return res.status(400).send({ success: false, message: "Email is required" });
+    }
+
+    // query to find user
+    const query = { email: email };
+
+    // update data (set membership field)
+    const updateDoc = {
+      $set: updateData
+    };
+
+    const result = await biodatasCollection.updateOne(query, updateDoc, { upsert: false });
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ success: false, message: "User not found" });
+    }
+
+    res.send({ success: true, message: "Membership updated successfully" });
+
+  } catch (error) {
+    console.error("Membership update error:", error);
+    res.status(500).send({ success: false, message: "Internal server error" });
+  }
+});
+ app.put('/users/:id', async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const option = { upsert: true }
+      const updatedRole = req.body;
+      const updatedDoc = {
+        $set: updatedRole
+      }
+      const result = await biodatasCollection.updateOne(filter, updatedDoc, option)
+      res.send(result);
+    })
+
+
+
+
+
+
+
+
+
+
+
+// Delete a favourite by biodataId for a user
+app.delete('/api/favourites/:userId/:biodataId', async (req, res) => {
+  const { userId, biodataId } = req.params;
+
+  try {
+    const result = await favouritesCollection.deleteOne({ userId, biodataId: Number(biodataId) });
+    if (result.deletedCount > 0) {
+      res.send({ message: 'Favourite deleted successfully' });
+    } else {
+      res.status(404).send({ message: 'Favourite not found' });
+    }
+  } catch (error) {
+    console.error('Error deleting favourite:', error);
+    res.status(500).send({ message: 'Server error deleting favourite' });
+  }
+});
+
+
+
+    // Send a ping to confirm a successful connection
+    // await client.db("admin").command({ ping: 1 });
+    // console.log("Pinged your deployment. You successfully connected to MongoDB!");
+  } finally {
+    // Ensures that the client will close when you finish/error
+    // await client.close();
+  }
+}
+run().catch(console.dir);
+
+
+app.get('/', (req, res) => {
+    res.send('Matrimony server is on')
+});
+
+app.listen(port, () => {
+    console.log(`Matrimony server is running on port ${port}`)
+})
