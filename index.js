@@ -3,13 +3,13 @@ const cors = require('cors');
 require('dotenv').config();
 const { MongoClient, ServerApiVersion,ObjectId  } = require('mongodb');
 
+const stripe = require('stripe')(process.env.PAYMENT_GATEWAY_KEY);
 
 const app = express();
 const port = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json())
-
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.cluq4ak.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -25,12 +25,12 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    // await client.connect();
+    await client.connect();
 
     // premium-members
-     const database = client.db("matrimonyhub"); // ✅ Your DB name
-    const biodatasCollection = database.collection("biodatas"); // ✅ Your Collection name
-    const favouoritebioCollection = database.collection("favouoritebio"); // ✅ Your Collection name
+     const database = client.db("matrimonyhub"); //DB name
+    const biodatasCollection = database.collection("biodatas"); //Collection name
+    const favouoritebioCollection = database.collection("favouoritebio");
 
     //  Premium Biodata API with age sorting (asc/desc)
     app.get('/api/premium-biodatas', async (req, res) => {
@@ -46,26 +46,26 @@ async function run() {
     });
 
 
-    // ✅ Create Biodata
-app.get("/api/biodata/user/", async (req, res) => {
-  const { userId } = req.params;
-  try {
-    const biodata = await biodatasCollection.find();
-    res.send(biodata || {}); // send empty object if not found
-  } catch (err) {
-    res.status(500).send({ error: "Failed to fetch biodata" });
-  }
-});
+    //Create Biodata
+    app.get("/api/biodata/user/", async (req, res) => {
+     const { userId } = req.params;
+     try {
+     const biodata = await biodatasCollection.find();
+     res.send(biodata || {}); // send empty object if not found
+     } catch (err) {
+     res.status(500).send({ error: "Failed to fetch biodata" });
+     }
+   });
 
-// ✅ Create new biodata (POST)
-app.post("/api/biodata", async (req, res) => {
-  const data = req.body;
-  try {
-    // Check if email already exists
-    const existing = await biodatasCollection.findOne({ email: data.email });
-    if (existing) {
+// Create new biodata (POST)
+    app.post("/api/biodata", async (req, res) => {
+    const data = req.body;
+    try {
+     // Check if email already exists
+     const existing = await biodatasCollection.findOne({ email: data.email });
+     if (existing) {
       return res.status(400).send({ message: "Email already exists" });
-    }
+     }
 
     const result = await biodatasCollection.insertOne(data);
     res.status(201).send({ message: "Biodata created", id: result.insertedId });
@@ -115,7 +115,7 @@ app.put("/api/biodata/:id", async (req, res) => {
 });
 
 
-    // ✅ Get All Biodatas
+    //Get All Biodatas
     app.get("/biodatas", async (req, res) => {
       const cursor = biodatasCollection.find();
       const result = await cursor.limit(200).toArray(); // limit 20
@@ -123,16 +123,39 @@ app.put("/api/biodata/:id", async (req, res) => {
     });
 
 
-    app.get("/biodatas/:id", async (req, res) => {
-  const id = req.params.id;
+   // GET biodata details with role check
+app.get("/api/biodata/details/:id", async (req, res) => {
+  const { id } = req.params;
+  const viewerEmail = req.query.email; // logged in user
+
   try {
-    const post = await biodatasCollection.findOne({ _id: new ObjectId(id) });
-    if (!post) {
+    const biodata = await biodatasCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!biodata) {
       return res.status(404).send({ message: "Biodata not found" });
     }
-    res.send(post);
+
+    // find viewer biodata
+    const viewer = await biodatasCollection.findOne({
+      email: viewerEmail,
+    });
+
+    const isViewerPremium = viewer?.membership === "premium";
+
+    // remove contact info if not premium
+    if (!isViewerPremium) {
+      delete biodata.email;
+      delete biodata.mobile;
+    }
+
+    res.send({
+      biodata,
+      isViewerPremium,
+    });
   } catch (err) {
-    res.status(500).send({ error: "Invalid ID or Server Error" });
+    res.status(500).send({ error: "Server error" });
   }
 });
 
@@ -148,26 +171,27 @@ app.post("/api/biodata", async (req, res) => {
   try {
     const { email } = req.body;
 
-    // ✅ Prevent duplicate email
+    // Prevent duplicate email
     const existing = await biodatasCollection.findOne({ email });
     if (existing) {
       return res.status(400).json({ message: "Biodata already exists for this email" });
     }
 
-    // ✅ Find the last biodata (sorted by biodataId in descending order)
+    // Find the last biodata (sorted by biodataId in descending order)
     const lastBiodata = await biodatasCollection
       .find()
       .sort({ biodataId: -1 })
       .limit(1)
       .toArray();
 
-    // ✅ Generate new biodataId
+    //  Generate new biodataId
     const newBiodataId = lastBiodata.length > 0 ? lastBiodata[0].biodataId + 1 : 1;
 
-    // ✅ Create new biodata with generated biodataId
+    // Create new biodata with generated biodataId
     const newBiodata = {
       ...req.body,
       biodataId: newBiodataId,
+      isPremium: false,   // DEFAULT
       createdAt: new Date(),
     };
 
@@ -184,7 +208,7 @@ app.post("/api/biodata", async (req, res) => {
 });
 
 
-// ✅ PUT: Update existing biodata by ID
+// PUT: Update existing biodata by ID
 app.put("/api/biodata/:id", async (req, res) => {
   const { id } = req.params;
   const updatedData = req.body;
@@ -241,6 +265,7 @@ app.get("/api/biodata/user/:userId", async (req, res) => {
   }
 });
 
+
 // User requests biodata to be premium
 app.patch('/api/biodata/request-premium/:id', async (req, res) => {
   const id = req.params.id;
@@ -258,33 +283,96 @@ app.patch('/api/biodata/request-premium/:id', async (req, res) => {
   }
 });
 
+// ************************************************ */
+
+// Create Payment Intent API
+
+app.post("/api/create-payment-intent", async (req, res) => {
+  const { amount } = req.body;
+
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: amount * 100, // cents
+    currency: "usd",
+    payment_method_types: ["card"],
+  });
+
+  res.send({
+    clientSecret: paymentIntent.client_secret,
+  });
+});
+
+// Save contact request after payment success
+
+const contactRequestCollection = database.collection("contactRequests");
+
+app.post("/api/contact-request", async (req, res) => {
+  const request = req.body;
+
+  const result = await contactRequestCollection.insertOne({
+    ...request,
+    status: "pending",
+    createdAt: new Date(),
+  });
+
+  res.send(result);
+});
+
+
+// Get user contact requests (MyContactRequest page)
+
+app.get("/api/my-contact-requests/:email", async (req, res) => {
+  const email = req.params.email;
+
+  const result = await contactRequestCollection
+    .find({ requesterEmail: email })
+    .toArray();
+
+  res.send(result);
+});
+
+
+// Admin approve contact request
+app.patch("/api/contact-request/approve/:id", async (req, res) => {
+  const id = req.params.id;
+
+  const result = await contactRequestCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { status: "approved" } }
+  );
+
+  res.send(result);
+});
+
+
+
+
 
 
 
 // Get all contact requests by user
-app.get('/api/contact-requests/:uid', async (req, res) => {
-  const uid = req.params.uid;
-  const requests = await client
-    .db('matrimonyhub')
-    .collection('contactRequests')
-    .find({ requesterId: uid })
-    .sort({ createdAt: -1 })
-    .toArray();
-  res.send(requests);
-});
+// app.get('/api/contact-requests/:uid', async (req, res) => {
+//   const uid = req.params.uid;
+//   const requests = await client
+//     .db('matrimonyhub')
+//     .collection('contactRequests')
+//     .find({ requesterId: uid })
+//     .sort({ createdAt: -1 })
+//     .toArray();
+//   res.send(requests);
+// });
 
-// Delete contact request
-app.delete('/api/contact-requests/:id', async (req, res) => {
-  const { ObjectId } = require('mongodb');
-  const id = req.params.id;
+// // Delete contact request
+// app.delete('/api/contact-requests/:id', async (req, res) => {
+//   const { ObjectId } = require('mongodb');
+//   const id = req.params.id;
 
-  const result = await client
-    .db('matrimonyhub')
-    .collection('contactRequests')
-    .deleteOne({ _id: new ObjectId(id) });
+//   const result = await client
+//     .db('matrimonyhub')
+//     .collection('contactRequests')
+//     .deleteOne({ _id: new ObjectId(id) });
 
-  res.send(result);
-});
+//   res.send(result);
+// });
 
 const favouritesCollection = database.collection("favourites");
 
@@ -362,15 +450,6 @@ app.put("/users/membership/:email", async (req, res) => {
     })
 
 
-
-
-
-
-
-
-
-
-
 // Delete a favourite by biodataId for a user
 app.delete('/api/favourites/:userId/:biodataId', async (req, res) => {
   const { userId, biodataId } = req.params;
@@ -388,11 +467,9 @@ app.delete('/api/favourites/:userId/:biodataId', async (req, res) => {
   }
 });
 
-
-
     // Send a ping to confirm a successful connection
-    // await client.db("admin").command({ ping: 1 });
-    // console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    await client.db("admin").command({ ping: 1 });
+    console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
