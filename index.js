@@ -145,14 +145,32 @@ app.get("/api/biodata/details/:id", async (req, res) => {
     const isViewerPremium = viewer?.membership === "premium";
 
     // remove contact info if not premium
-    if (!isViewerPremium) {
+    // if (!isViewerPremium) {
+    //   delete biodata.email;
+    //   delete biodata.mobile;
+    // }
+
+    // 🔥 check approved contact request
+    const approvedRequest = await client
+      .db("matrimonyhub")
+      .collection("contactRequests")
+      .findOne({
+        biodataId: Number(biodata.biodataId),
+        requesterEmail: viewerEmail,
+        status: "approved",
+      });
+
+    const canSeeContact = isViewerPremium || approvedRequest;
+
+    if (!canSeeContact) {
       delete biodata.email;
       delete biodata.mobile;
     }
 
+
     res.send({
       biodata,
-      isViewerPremium,
+      canSeeContact,
     });
   } catch (err) {
     res.status(500).send({ error: "Server error" });
@@ -310,6 +328,7 @@ app.post("/api/contact-request", async (req, res) => {
 
   const result = await contactRequestCollection.insertOne({
     ...request,
+    biodataId: Number(request.biodataId), 
     status: "pending",
     createdAt: new Date(),
   });
@@ -330,20 +349,65 @@ app.get("/api/my-contact-requests/:email", async (req, res) => {
   res.send(result);
 });
 
-
-// Admin approve contact request
-app.patch("/api/contact-request/approve/:id", async (req, res) => {
+// User Delete Request
+app.delete("/api/contact-request/:id", async (req, res) => {
   const id = req.params.id;
 
-  const result = await contactRequestCollection.updateOne(
-    { _id: new ObjectId(id) },
-    { $set: { status: "approved" } }
-  );
+  const result = await contactRequestCollection.deleteOne({
+    _id: new ObjectId(id),
+  });
 
   res.send(result);
 });
 
 
+
+// GET – Admin All Contact Requests
+app.get("/api/contact-requests", async (req, res) => {
+  const result = await contactRequestCollection.find().toArray();
+  res.send(result);
+});
+
+
+// Admin approve contact request
+app.patch("/api/contact-request/approve/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const request = await contactRequestCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!request) {
+      return res.status(404).send({ message: "Request not found" });
+    }
+
+    const biodata = await biodatasCollection.findOne({
+      biodataId: Number(request.biodataId),
+    });
+
+    if (!biodata) {
+      return res.status(404).send({ message: "Biodata not found" });
+    }
+
+    const result = await contactRequestCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          status: "approved",
+          mobile: biodata.mobile,
+          email: biodata.email,
+          name: biodata.name,
+        },
+      }
+    );
+
+    res.send({ success: true, result });
+  } catch (error) {
+    console.error("Approve error:", error);
+    res.status(500).send({ message: "Server error" });
+  }
+});
 
 
 
