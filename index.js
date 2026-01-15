@@ -27,8 +27,7 @@ async function run() {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
 
-    // premium-members
-     const database = client.db("matrimonyhub"); //DB name
+    const database = client.db("matrimonyhub"); //DB name
     const biodatasCollection = database.collection("biodatas"); //Collection name
     const favouoritebioCollection = database.collection("favouoritebio");
 
@@ -45,146 +44,7 @@ async function run() {
       res.send(result);
     });
 
-
-    //Create Biodata
-    app.get("/api/biodata/user/", async (req, res) => {
-     const { userId } = req.params;
-     try {
-     const biodata = await biodatasCollection.find();
-     res.send(biodata || {}); // send empty object if not found
-     } catch (err) {
-     res.status(500).send({ error: "Failed to fetch biodata" });
-     }
-   });
-
-// Create new biodata (POST)
-    app.post("/api/biodata", async (req, res) => {
-    const data = req.body;
-    try {
-     // Check if email already exists
-     const existing = await biodatasCollection.findOne({ email: data.email });
-     if (existing) {
-      return res.status(400).send({ message: "Email already exists" });
-     }
-
-    const result = await biodatasCollection.insertOne(data);
-    res.status(201).send({ message: "Biodata created", id: result.insertedId });
-  } catch (err) {
-    console.error(err);
-    res.status(500).send({ error: "Failed to create biodata" });
-  }
-});
-
-
-app.put("/api/biodata/:id", async (req, res) => {
-  const { id } = req.params;
-  const updatedData = { ...req.body };
-
-  // Remove _id if it exists
-  delete updatedData._id;
-
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).send({ error: "Invalid biodata ID" });
-  }
-
-  try {
-    // Prevent duplicate email for other records
-    const existing = await biodatasCollection.findOne({
-      email: updatedData.email,
-      _id: { $ne: new ObjectId(id) },
-    });
-
-    if (existing) {
-      return res.status(400).send({ message: "Email already exists in another biodata" });
-    }
-
-    const result = await biodatasCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updatedData }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).send({ message: "Biodata not found" });
-    }
-
-    res.status(200).send({ message: "Biodata updated successfully", updateResult: result });
-  } catch (err) {
-    console.error("PUT /api/biodata/:id error:", err);
-    res.status(500).send({ error: "Server error while updating biodata" });
-  }
-});
-
-
-    //Get All Biodatas
-    app.get("/biodatas", async (req, res) => {
-      const cursor = biodatasCollection.find();
-      const result = await cursor.limit(200).toArray(); // limit 20
-      res.send(result);
-    });
-
-
-   // GET biodata details with role check
-app.get("/api/biodata/details/:id", async (req, res) => {
-  const { id } = req.params;
-  const viewerEmail = req.query.email; // logged in user
-
-  try {
-    const biodata = await biodatasCollection.findOne({
-      _id: new ObjectId(id),
-    });
-
-    if (!biodata) {
-      return res.status(404).send({ message: "Biodata not found" });
-    }
-
-    // find viewer biodata
-    const viewer = await biodatasCollection.findOne({
-      email: viewerEmail,
-    });
-
-    const isViewerPremium = viewer?.membership === "premium";
-
-    // remove contact info if not premium
-    // if (!isViewerPremium) {
-    //   delete biodata.email;
-    //   delete biodata.mobile;
-    // }
-
-    // 🔥 check approved contact request
-    const approvedRequest = await client
-      .db("matrimonyhub")
-      .collection("contactRequests")
-      .findOne({
-        biodataId: Number(biodata.biodataId),
-        requesterEmail: viewerEmail,
-        status: "approved",
-      });
-
-    const canSeeContact = isViewerPremium || approvedRequest;
-
-    if (!canSeeContact) {
-      delete biodata.email;
-      delete biodata.mobile;
-    }
-
-
-    res.send({
-      biodata,
-      canSeeContact,
-    });
-  } catch (err) {
-    res.status(500).send({ error: "Server error" });
-  }
-});
-
-
-//  Create or update biodata
-   app.get('/allbiodata', async (req, res) => {
-      const result = await biodatasCollection.find().toArray();
-      res.send(result);
-    })
-
-// POST - Create a new biodata with auto-generated biodataId
+    // POST - Create a new biodata with auto-generated biodataId
 app.post("/api/biodata", async (req, res) => {
   try {
     const { email } = req.body;
@@ -225,11 +85,13 @@ app.post("/api/biodata", async (req, res) => {
   }
 });
 
-
 // PUT: Update existing biodata by ID
 app.put("/api/biodata/:id", async (req, res) => {
   const { id } = req.params;
   const updatedData = req.body;
+
+    // Remove _id if it exists
+  delete updatedData._id;
 
   console.log("Incoming update request for ID:", id);
   console.log("Payload received:", updatedData);
@@ -267,7 +129,6 @@ app.put("/api/biodata/:id", async (req, res) => {
   }
 });
 
-
 app.get("/api/biodata/user/:userId", async (req, res) => {
   const { userId } = req.params;
 
@@ -282,6 +143,73 @@ app.get("/api/biodata/user/:userId", async (req, res) => {
     res.status(500).json({ error: "Server error while fetching biodata" });
   }
 });
+
+    //Get All Biodatas
+    app.get("/biodatas", async (req, res) => {
+  const result = await biodatasCollection
+    .find()
+    .sort({ biodataId: 1 }) // SORT HERE
+    .limit(200)
+    .toArray();
+
+  res.send(result);
+});
+
+
+   // GET biodata details with role check
+app.get("/api/biodata/details/:id", async (req, res) => {
+  const { id } = req.params;
+  const viewerEmail = req.query.email; // logged in user
+
+  try {
+    const biodata = await biodatasCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!biodata) {
+      return res.status(404).send({ message: "Biodata not found" });
+    }
+
+    // find viewer biodata
+    const viewer = await biodatasCollection.findOne({
+      email: viewerEmail,
+    });
+
+    const isViewerPremium = viewer?.membership === "premium";
+
+// .............................................//
+    // check approved contact request
+    const approvedRequest = await client
+      .db("matrimonyhub")
+      .collection("contactRequests")
+      .findOne({
+        biodataId: Number(biodata.biodataId),
+        requesterEmail: viewerEmail,
+        status: "approved",
+      });
+
+    const canSeeContact = isViewerPremium || approvedRequest;
+
+    if (!canSeeContact) {
+      delete biodata.email;
+      delete biodata.mobile;
+    }
+
+    res.send({
+      biodata,
+      canSeeContact,
+    });
+  } catch (err) {
+    res.status(500).send({ error: "Server error" });
+  }
+});
+
+
+//  Create or update biodata
+   app.get('/allbiodata', async (req, res) => {
+      const result = await biodatasCollection.find().toArray();
+      res.send(result);
+    })
 
 
 // User requests biodata to be premium
@@ -349,7 +277,7 @@ app.get("/api/my-contact-requests/:email", async (req, res) => {
   res.send(result);
 });
 
-// User Delete Request
+// User Contact Delete Request
 app.delete("/api/contact-request/:id", async (req, res) => {
   const id = req.params.id;
 
@@ -359,7 +287,6 @@ app.delete("/api/contact-request/:id", async (req, res) => {
 
   res.send(result);
 });
-
 
 
 // GET – Admin All Contact Requests
@@ -406,50 +333,6 @@ app.patch("/api/contact-request/approve/:id", async (req, res) => {
   } catch (error) {
     console.error("Approve error:", error);
     res.status(500).send({ message: "Server error" });
-  }
-});
-
-
-
-
-
-// Get all contact requests by user
-// app.get('/api/contact-requests/:uid', async (req, res) => {
-//   const uid = req.params.uid;
-//   const requests = await client
-//     .db('matrimonyhub')
-//     .collection('contactRequests')
-//     .find({ requesterId: uid })
-//     .sort({ createdAt: -1 })
-//     .toArray();
-//   res.send(requests);
-// });
-
-// // Delete contact request
-// app.delete('/api/contact-requests/:id', async (req, res) => {
-//   const { ObjectId } = require('mongodb');
-//   const id = req.params.id;
-
-//   const result = await client
-//     .db('matrimonyhub')
-//     .collection('contactRequests')
-//     .deleteOne({ _id: new ObjectId(id) });
-
-//   res.send(result);
-// });
-
-const favouritesCollection = database.collection("favourites");
-
-// Get user's favourite biodata list
-app.get('/api/favourites/:userId', async (req, res) => {
-  const userId = req.params.userId;
-
-  try {
-    const favs = await favouritesCollection.find({ userId }).toArray();
-    res.send(favs);
-  } catch (error) {
-    console.error('Error fetching favourites:', error);
-    res.status(500).send({ message: 'Server error fetching favourites' });
   }
 });
 
