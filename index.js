@@ -204,30 +204,68 @@ app.get("/api/biodata/details/:id", async (req, res) => {
   }
 });
 
-
-//  Create or update biodata
-   app.get('/allbiodata', async (req, res) => {
-      const result = await biodatasCollection.find().toArray();
-      res.send(result);
-    })
-
-
 // User requests biodata to be premium
-app.patch('/api/biodata/request-premium/:id', async (req, res) => {
-  const id = req.params.id;
-  const { ObjectId } = require("mongodb");
 
-  const result = await biodatasCollection.updateOne(
+app.patch("/api/biodata/request-premium/:id", async (req, res) => {
+  const id = req.params.id;
+
+  const biodata = await biodatasCollection.findOne({
+    _id: new ObjectId(id),
+  });
+
+  if (!biodata) {
+    return res.status(404).send({ message: "Biodata not found" });
+  }
+
+  // already premium
+  if (biodata.isPremium === true) {
+    return res.status(400).send({
+      message: "This biodata is already premium",
+    });
+  }
+
+  // already requested
+  if (biodata.premiumRequested === true) {
+    return res.status(400).send({
+      message: "Premium request already sent",
+    });
+  }
+
+  await biodatasCollection.updateOne(
     { _id: new ObjectId(id) },
     { $set: { premiumRequested: true } }
   );
 
-  if (result.modifiedCount > 0) {
-    res.send({ message: "Request sent to admin for approval" });
-  } else {
-    res.status(400).send({ message: "Failed to update" });
-  }
+  res.send({ message: "Premium request sent to admin" });
 });
+
+
+// Admin: get all premium requests
+app.get("/api/admin/premium-requests", async (req, res) => {
+  const result = await biodatasCollection.find({
+    premiumRequested: true,
+    isPremium: false
+  }).toArray();
+
+  res.send(result);
+});
+// Admin approve biodata premium
+app.patch("/api/admin/approve-premium/:id", async (req, res) => {
+  const id = req.params.id;
+
+  const result = await biodatasCollection.updateOne(
+    { _id: new ObjectId(id) },
+    {
+      $set: {
+        isPremium: true,
+        premiumRequested: false
+      }
+    }
+  );
+
+  res.send(result);
+});
+
 
 // ************************************************ */
 
