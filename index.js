@@ -32,17 +32,24 @@ async function run() {
     const favouoritebioCollection = database.collection("favouoritebio");
 
     //  Premium Biodata API with age sorting (asc/desc)
-    app.get('/api/premium-biodatas', async (req, res) => {
-      const sortOrder = req.query.sort === 'desc' ? -1 : 1;
+ app.get('/api/premium-biodatas', async (req, res) => {
+  const sortOrder = req.query.sort === 'desc' ? -1 : 1;
 
-      const result = await biodatasCollection
-        .find({ isPremium: "true" })
-        .sort({ age: sortOrder })
-        .limit(6)
-        .toArray();
+  const result = await biodatasCollection
+    .find({
+      $or: [
+        { isPremium: true },
+        { isPremium: "true" },
+        { membership: "premium" }
+      ]
+    })
+    .sort({ age: sortOrder })
+    .limit(6)
+    .toArray();
 
-      res.send(result);
-    });
+  res.send(result);
+});
+
 
     // POST - Create a new biodata with auto-generated biodataId
 app.post("/api/biodata", async (req, res) => {
@@ -145,10 +152,17 @@ app.get("/api/biodata/user/:userId", async (req, res) => {
 });
 
     //Get All Biodatas
-    app.get("/biodatas", async (req, res) => {
+app.get("/biodatas", async (req, res) => {
+  const search = req.query.search;
+
+  let query = {};
+  if (search) {
+    query.name = { $regex: search, $options: "i" };
+  }
+
   const result = await biodatasCollection
-    .find()
-    .sort({ biodataId: 1 }) // SORT HERE
+    .find(query)
+    .sort({ biodataId: 1 })
     .limit(200)
     .toArray();
 
@@ -376,81 +390,81 @@ app.patch("/api/contact-request/approve/:id", async (req, res) => {
 
 // ************************************************ */
 
-    app.post('/favouritebio', async (req, res) => {
-      const post = req.body;
-      const result = await favouoritebioCollection.insertOne(post)
-      res.send(result)
-    })
-    app.get('/favouritebio', async (req, res) => {
-      const result = await favouoritebioCollection.find().toArray();
-      res.send(result);
-    })
-    app.delete('/favouritebio/:biodataId', async (req, res) => {
-      const biodataId = Number(req.params.biodataId);
-      const query = { biodataId:biodataId};
-      const result = await favouoritebioCollection.deleteOne(query);
-      res.send(result);
-    })
+    app.post("/favouritebio", async (req, res) => {
+    const { userEmail, biodataId } = req.body;
 
-app.put("/users/membership/:email", async (req, res) => {
-  try {
-    const email = req.params.email; // get email from URL
-    const updateData = req.body;    // get body data (e.g. { membership: "premium" })
+    const exists = await favouoritebioCollection.findOne({
+     userEmail,
+     biodataId,
+    });
 
-    if (!email) {
-      return res.status(400).send({ success: false, message: "Email is required" });
+     if (exists) {
+      return res.status(400).send({ message: "Already added to favourites" });
     }
 
-    // query to find user
-    const query = { email: email };
+    const result = await favouoritebioCollection.insertOne({
+      ...req.body,
+      createdAt: new Date(),
+     });
 
-    // update data (set membership field)
-    const updateDoc = {
-      $set: updateData
-    };
+     res.send(result);
+    });
 
-    const result = await biodatasCollection.updateOne(query, updateDoc, { upsert: false });
+    app.get("/favouritebio/:email", async (req, res) => {
+     const email = req.params.email;
+     const result = await favouoritebioCollection
+      .find({ userEmail: email })
+      .toArray();
 
-    if (result.matchedCount === 0) {
-      return res.status(404).send({ success: false, message: "User not found" });
-    }
+     res.send(result);
+    });
 
-    res.send({ success: true, message: "Membership updated successfully" });
+    app.delete("/favouritebio/:email/:biodataId", async (req, res) => {
+    const { email, biodataId } = req.params;
 
-  } catch (error) {
-    console.error("Membership update error:", error);
-    res.status(500).send({ success: false, message: "Internal server error" });
-  }
+    const result = await favouoritebioCollection.deleteOne({
+     userEmail: email,
+     biodataId: Number(biodataId),
+    });
+
+    res.send(result);
+   });
+  //  .............................manageusers
+app.put("/users/:id", async (req, res) => {
+  const id = req.params.id;
+
+  const result = await biodatasCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: req.body }
+  );
+
+  res.send(result);
 });
- app.put('/users/:id', async (req, res) => {
-      const id = req.params.id;
-      const filter = { _id: new ObjectId(id) };
-      const option = { upsert: true }
-      const updatedRole = req.body;
-      const updatedDoc = {
-        $set: updatedRole
-      }
-      const result = await biodatasCollection.updateOne(filter, updatedDoc, option)
-      res.send(result);
-    })
 
 
-// Delete a favourite by biodataId for a user
-app.delete('/api/favourites/:userId/:biodataId', async (req, res) => {
-  const { userId, biodataId } = req.params;
+// ............
+// GET user role
+// app.get("/users/role", async (req, res) => {
+//   const email = req.query.email;
 
-  try {
-    const result = await favouritesCollection.deleteOne({ userId, biodataId: Number(biodataId) });
-    if (result.deletedCount > 0) {
-      res.send({ message: 'Favourite deleted successfully' });
-    } else {
-      res.status(404).send({ message: 'Favourite not found' });
-    }
-  } catch (error) {
-    console.error('Error deleting favourite:', error);
-    res.status(500).send({ message: 'Server error deleting favourite' });
-  }
-});
+//   if (!email) {
+//     return res.status(400).send({ role: "user" });
+//   }
+
+//   const user = await biodatasCollection.findOne({ email });
+
+//   if (!user) {
+//     return res.send({ role: "user" });
+//   }
+
+// res.send({
+//   role: user.Role?.toLowerCase() || "user"
+// });
+// });
+
+
+  
+
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
