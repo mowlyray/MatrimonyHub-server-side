@@ -309,8 +309,10 @@ app.post("/api/contact-request", async (req, res) => {
   const result = await contactRequestCollection.insertOne({
     ...request,
     biodataId: Number(request.biodataId), 
+    amount: Number(request.amount),
     status: "pending",
     createdAt: new Date(),
+    
   });
 
   res.send(result);
@@ -440,6 +442,108 @@ app.put("/users/:id", async (req, res) => {
 
   res.send(result);
 });
+// ................admin Dashboard Stats API
+app.get("/api/admin/stats", async (req, res) => {
+  try {
+    const totalBiodata = await biodatasCollection.countDocuments();
+
+    const maleBiodata = await biodatasCollection.countDocuments({
+      biodataType: "Male",
+    });
+
+    const femaleBiodata = await biodatasCollection.countDocuments({
+      biodataType: "Female",
+    });
+
+    const premiumBiodata = await biodatasCollection.countDocuments({
+      isPremium: true,
+    });
+
+    // 🔥 TOTAL REVENUE
+    const revenueResult = await contactRequestCollection.aggregate([
+      {
+        $match: { status: "approved" } // only successful purchases
+      },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: "$amount" }
+        }
+      }
+    ]).toArray();
+
+    const totalRevenue = revenueResult[0]?.totalRevenue || 0;
+
+    res.send({
+      totalBiodata,
+      maleBiodata,
+      femaleBiodata,
+      premiumBiodata,
+      totalRevenue,
+    });
+  } catch (error) {
+    res.status(500).send({ error: "Stats error" });
+  }
+});
+
+// POST success story (user)
+// POST Got Married Success Story
+// POST Got Married Success Story
+app.post("/api/success-story", async (req, res) => {
+  const story = req.body;
+
+  // 🔒 check: already submitted or not
+  const alreadySubmitted = await client
+    .db("matrimonyhub")
+    .collection("successStories")
+    .findOne({ userEmail: story.userEmail });
+
+  if (alreadySubmitted) {
+    return res.status(400).send({
+      message: "You have already submitted a success story",
+    });
+  }
+
+  const result = await client
+    .db("matrimonyhub")
+    .collection("successStories")
+    .insertOne({
+      userEmail: story.userEmail, // 🔑 important
+      selfBiodataId: story.selfBiodataId,
+      partnerBiodataId: story.partnerBiodataId,
+      image: story.image,
+      storyText: story.storyText,
+      rating: Number(story.rating),
+      marriageDate: new Date(),
+      createdAt: new Date(),
+    });
+
+  res.send(result);
+});
+
+app.get("/api/success-story", async (req, res) => {
+  const result = await client
+    .db("matrimonyhub")
+    .collection("successStories")
+    .find()
+    .sort({ marriageDate: -1 }) // newest first
+    .toArray();
+
+  res.send(result);
+});
+
+app.get("/api/admin/success-stories", async (req, res) => {
+  const result = await client
+    .db("matrimonyhub")
+    .collection("successStories")
+    .find()
+    .sort({ marriageDate: -1 })
+    .toArray();
+
+  res.send(result);
+});
+
+
 
 
 // ............
